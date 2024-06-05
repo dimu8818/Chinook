@@ -62,3 +62,13 @@ a, .btn-link {
     .blazor-error-boundary::after {
         content: "An error has occurred."
     }
+
+.right-corner {
+    position: relative;
+}
+
+.right-corner input {
+    position: absolute;
+    top: 0;
+    right: 0;
+}
