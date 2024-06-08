@@ -1,7 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Metadata;
+﻿using Microsoft.EntityFrameworkCore;
 using Chinook.Models;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 
@@ -40,6 +37,7 @@ public partial class ChinookContext : IdentityDbContext<ChinookUser>
                 .Build();
 
             var connectionString = configuration.GetConnectionString("DefaultConnection");
+            optionsBuilder.EnableSensitiveDataLogging(true);
             optionsBuilder.UseSqlite(connectionString);
         }
     }
@@ -218,7 +216,7 @@ public partial class ChinookContext : IdentityDbContext<ChinookUser>
         {
             entity.ToTable("Playlist");
 
-            entity.Property(e => e.PlaylistId).ValueGeneratedNever();
+            //entity.Property(e => e.PlaylistId).ValueGeneratedNever();
 
             entity.Property(e => e.Name).HasColumnType("NVARCHAR(120)");
 

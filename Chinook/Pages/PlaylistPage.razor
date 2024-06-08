@@ -105,7 +105,9 @@ else
     {
         var track = Playlist.Tracks.FirstOrDefault(t => t.TrackId == trackId);
 
-        // TODO: add track to Favorites playlist
+        if(track != null) {
+            
+        }
 
         InfoMessage = $"Track {track.ArtistName} - {track.AlbumTitle} - {track.TrackName} added to playlist Favorites.";
     }
