@@ -1,6 +1,7 @@
 ﻿@page "/playlist/{PlaylistId:long}"
 @attribute [Authorize]
 
+@using Chinook.ClientModels
 @using Chinook.Models
 @using Microsoft.EntityFrameworkCore
 @using System.Security.Claims;
@@ -39,7 +40,7 @@ else
                     <td>@track.ArtistName - @track.AlbumTitle - @track.TrackName</td>
                     <td>
                         <div class="d-flex">
-                            @if (Playlist.Name != "Favorite")
+                            @if (Playlist.Name != Constants.FavoritePlaylistName)
                             {
                                 @if (track.IsFavorite)
                                 {
@@ -49,9 +50,8 @@ else
                                 {
                                     <a href="#" class="m-1" title="Mark as favorite" @onclick="@(() => FavoriteTrack(track.TrackId))" @onclick:preventDefault><i class="bi bi-star"></i></a>
                                 }
-
+                                <a href="#" class="m-1" title="Remove from this playlist" @onclick="@(() => RemoveTrack(track.TrackId))" @onclick:preventDefault><i class="bi bi-trash"></i></a>
                             }
-                            <a href="#" class="m-1" title="Remove from this playlist" @onclick="@(() => RemoveTrack(track.TrackId))" @onclick:preventDefault><i class="bi bi-trash"></i></a>
                         </div>
                     </td>
                 </tr>
@@ -69,8 +69,7 @@ else
     private string CurrentUserId;
     private string InfoMessage;
 
-    protected override async Task OnInitializedAsync()
-    {
+    protected override async Task OnParametersSetAsync() {
         CurrentUserId = await GetUserId();
 
         await InvokeAsync(StateHasChanged);
@@ -79,16 +78,15 @@ else
         Playlist = DbContext.Playlists
             .Include(a => a.Tracks).ThenInclude(a => a.Album).ThenInclude(a => a.Artist)
             .Where(p => p.PlaylistId == PlaylistId)
-            .Select(p => new ClientModels.Playlist()
-                {
+            .Select(p => new ClientModels.Playlist() {
                     Name = p.Name,
-                    Tracks = p.Tracks.Select(t => new ClientModels.PlaylistTrack()
-                    {
+                    PlaylistId = p.PlaylistId,
+                    Tracks = p.Tracks.Select(t => new ClientModels.PlaylistTrack() {
                         AlbumTitle = t.Album.Title,
                         ArtistName = t.Album.Artist.Name,
                         TrackId = t.TrackId,
                         TrackName = t.Name,
-                        IsFavorite = t.Playlists.Where(p => p.UserPlaylists.Any(up => up.UserId == CurrentUserId && up.Playlist.Name == "Favorites")).Any()
+                        IsFavorite = t.Playlists.Where(p => p.UserPlaylists.Any(up => up.UserId == CurrentUserId && up.Playlist.Name == Constants.FavoritePlaylistName)).Any()
                     }).ToList()
                 })
             .FirstOrDefault();
@@ -101,28 +99,110 @@ else
         return userId;
     }
 
-    private void FavoriteTrack(long trackId)
-    {
+    private async Task FavoriteTrack(long trackId) {
+        await using var dbContext = await DbFactory.CreateDbContextAsync();
         var track = Playlist.Tracks.FirstOrDefault(t => t.TrackId == trackId);
 
-        // TODO: add track to Favorites playlist
+        if (track != null) {
+            track.IsFavorite = true;
+
+            var favoritePlaylist = await dbContext.Playlists
+            .Include(p => p.UserPlaylists)
+            .Include(p => p.Tracks)
+            .FirstOrDefaultAsync(p => p.Name == Constants.FavoritePlaylistName &&
+                                      p.UserPlaylists.Any(up => up.UserId == CurrentUserId));
+
+            if (favoritePlaylist == null) {
+                // Create the "Favorites" playlist if it doesn't exist
+                var dbTrack = dbContext.Tracks
+                .Include(p => p.Playlists)
+                .FirstOrDefault(t => t.TrackId == trackId);
+
+                if (dbTrack != null) {
+
+                    var newPlaylist = new Chinook.Models.Playlist {
+                            Name = Constants.FavoritePlaylistName,
+                            UserPlaylists = new List<UserPlaylist>
+                                                    {
+                                            new UserPlaylist
+                                            {
+                                                UserId = CurrentUserId
+                                            }
+                                        }
+                        };
+
+                    // Add the new playlist and save to generate PlaylistId
+                    dbContext.Playlists.Add(newPlaylist);
+                    await dbContext.SaveChangesAsync();
+
+                    // Add the track to the newly created playlist
+                    newPlaylist.Tracks.Add(dbTrack);
+                    dbContext.Entry(newPlaylist).State = EntityState.Modified;
+
+                    await dbContext.SaveChangesAsync();
+                }
+            } else {
+                if (!favoritePlaylist.Tracks.Any(t => t.TrackId == trackId)) {
+                    var dbTrack = dbContext.Tracks
+                                    .Include(p => p.Playlists)
+                                    .FirstOrDefault(t => t.TrackId == trackId);
+
+                    if (dbTrack != null) {
+                        favoritePlaylist.Tracks.Add(dbTrack);
+                        await dbContext.SaveChangesAsync();
+                    }
+                }
+            }
+        }
 
         InfoMessage = $"Track {track.ArtistName} - {track.AlbumTitle} - {track.TrackName} added to playlist Favorites.";
     }
 
-    private void UnfavoriteTrack(long trackId)
-    {
+    private async Task UnfavoriteTrack(long trackId) {
+        await using var dbContext = await DbFactory.CreateDbContextAsync();
         var track = Playlist.Tracks.FirstOrDefault(t => t.TrackId == trackId);
 
-        // TODO: remove track from Favorites playlist
+        if (track != null) {
+            track.IsFavorite = false;
+
+            var favoritePlaylist = await dbContext.Playlists
+                                   .Include(p => p.UserPlaylists)
+                                   .Include(p => p.Tracks)
+                                   .FirstOrDefaultAsync(p => p.Name == Constants.FavoritePlaylistName
+                                        && p.UserPlaylists.Any(up => up.UserId == CurrentUserId));
+
+            if (favoritePlaylist != null) {
+                var trackToRemove = favoritePlaylist.Tracks.FirstOrDefault(t => t.TrackId == trackId);
+                if (trackToRemove != null) {
+                    favoritePlaylist.Tracks.Remove(trackToRemove);
+                    await dbContext.SaveChangesAsync();
+                }
+            }
+        }
 
         InfoMessage = $"Track {track.ArtistName} - {track.AlbumTitle} - {track.TrackName} removed from playlist Favorites.";
     }
 
-    private void RemoveTrack(long trackId)
+    private async Task RemoveTrack(long trackId)
     {
-        // TODO
-        
+        await using var dbContext = await DbFactory.CreateDbContextAsync();
+        var track = Playlist.Tracks.FirstOrDefault(t => t.TrackId == trackId);
+
+        if (track != null) {
+            var playlist = await dbContext.Playlists
+                                   .Include(p => p.UserPlaylists)
+                                   .Include(p => p.Tracks)
+                                   .FirstOrDefaultAsync(p => p.PlaylistId == Playlist.PlaylistId);
+
+            if (playlist != null) {
+                var trackToRemove = playlist.Tracks.FirstOrDefault(t => t.TrackId == trackId);
+                if (trackToRemove != null) {
+                    playlist.Tracks.Remove(trackToRemove);
+                    await dbContext.SaveChangesAsync();
+                }
+            }
+        }
+
         CloseInfoMessage();
     }
 
