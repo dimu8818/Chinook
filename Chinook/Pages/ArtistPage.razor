@@ -3,6 +3,7 @@
 
 @using Chinook.Models
 @using Chinook.ClientModels
+@using Chinook.Services.Interfaces
 @using Microsoft.EntityFrameworkCore
 @using System.Security.Claims;
 
@@ -59,17 +60,9 @@
 
         <div class="mb-2">
             <label for="ExistingPlaylist">Add to existing playlist</label>
-            <select class="form-control" id="ExistingPlaylist">
-                <option>Playlist 1</option>
-                <option>Playlist 2</option>
-                <option>Playlist 3</option>
-            </select>
-        </div>
-        <div class="mb-2">
-            <label for="ExistingPlaylist">Add to existing playlist</label>
             <select class="form-control" id="ExistingPlaylist" @bind="SelectedExistingPlaylistId">
-                @foreach (var playlist in ExistingPlaylists) {
-                    <option value="@playlist.Id">@playlist.Name</option>
+                @foreach (var playlist in PlaylistService.Playlists) {
+                    <option value="@playlist.PlaylistId">@playlist.Name</option>
                 }
             </select>
         </div>
@@ -87,13 +80,14 @@
     [Parameter] public long ArtistId { get; set; }
     [CascadingParameter] private Task<AuthenticationState> authenticationState { get; set; }
     [Inject] IDbContextFactory<ChinookContext> DbFactory { get; set; }
+    [Inject] IPlaylistService PlaylistService { get; set; }
+
     private Modal PlaylistDialog { get; set; }
     private string NewPlaylistName { get; set; }
     private string SelectedExistingPlaylistId { get; set; }
 
     private Artist Artist;
     private List<PlaylistTrack> Tracks;
-    private List<Chinook.Models.Playlist> ExistingPlaylists;
     private DbContext DbContext;
     private PlaylistTrack SelectedTrack;
     private string InfoMessage;
@@ -116,7 +110,7 @@
                 })
             .ToList();
 
-        //ExistingPlaylists = 
+        await PlaylistService.LoadPlaylists(CurrentUserId);
     }
 
     private async Task<string> GetUserId() {
@@ -149,7 +143,7 @@
                     var newPlaylist = new Chinook.Models.Playlist {
                             Name = Constants.FavoritePlaylistName,
                             UserPlaylists = new List<UserPlaylist>
-                                                {
+                                                    {
                                             new UserPlaylist
                                             {
                                                 UserId = CurrentUserId
@@ -173,7 +167,7 @@
                                     .Include(p => p.Playlists)
                                     .FirstOrDefault(t => t.TrackId == trackId);
 
-                    if(dbTrack != null) {
+                    if (dbTrack != null) {
                         favoritePlaylist.Tracks.Add(dbTrack);
                         await dbContext.SaveChangesAsync();
                     }
@@ -188,13 +182,13 @@
         await using var dbContext = await DbFactory.CreateDbContextAsync();
         var track = Tracks.FirstOrDefault(t => t.TrackId == trackId);
 
-        if (track != null){
+        if (track != null) {
             track.IsFavorite = false;
 
             var favoritePlaylist = await dbContext.Playlists
                                    .Include(p => p.UserPlaylists)
                                    .Include(p => p.Tracks)
-                                   .FirstOrDefaultAsync(p => p.Name == Constants.FavoritePlaylistName 
+                                   .FirstOrDefaultAsync(p => p.Name == Constants.FavoritePlaylistName
                                         && p.UserPlaylists.Any(up => up.UserId == CurrentUserId));
 
             if (favoritePlaylist != null) {
@@ -216,12 +210,14 @@
     }
 
     private async Task AddTrackToPlaylist() {
+        string playlistName = string.Empty;
 
+        await using var dbContext = await DbFactory.CreateDbContextAsync();
         if (!string.IsNullOrWhiteSpace(NewPlaylistName)) {
-            await using var dbContext = await DbFactory.CreateDbContextAsync();
+
             var playlist = dbContext.Playlists.FirstOrDefault(t => t.Name == NewPlaylistName);
 
-            if(playlist == null) {
+            if (playlist == null) {
 
                 var dbTrack = dbContext.Tracks
                 .Include(p => p.Playlists)
@@ -231,26 +227,57 @@
                     var newPlaylist = new Chinook.Models.Playlist {
                             Name = NewPlaylistName,
                             UserPlaylists = new List<UserPlaylist>
-                                                {
+                                                    {
                                                     new UserPlaylist
                                                     {
                                                         UserId = CurrentUserId
                                                     }
                                                 }
-                                            };
+                        };
 
                     newPlaylist.Tracks.Add(dbTrack);
 
                     dbContext.Playlists.Add(newPlaylist);
                     await dbContext.SaveChangesAsync();
+                    playlistName = NewPlaylistName;
+
+                    await PlaylistService.LoadPlaylists(CurrentUserId);
+                }
+            } else {
+                if (!playlist.Tracks.Any(p => p.TrackId == SelectedTrack.TrackId)) {
+                    var dbTrack = dbContext.Tracks
+                    .Include(p => p.Playlists)
+                    .FirstOrDefault(t => t.TrackId == SelectedTrack.TrackId);
+
+                    if (dbTrack != null) {
+                        playlist.Tracks.Add(dbTrack);
+                        await dbContext.SaveChangesAsync();
+                        playlistName = playlist.Name;
+                    }
                 }
             }
         } else {
-            
+            if (long.TryParse(SelectedExistingPlaylistId, out long playlistId)) {
+                var playlist = dbContext.Playlists
+                                    .Include(p => p.Tracks)
+                                    .FirstOrDefault(t => t.PlaylistId == playlistId);
+
+                if (playlist != null && !playlist.Tracks.Any(p => p.TrackId == SelectedTrack.TrackId)) {
+                    var dbTrack = dbContext.Tracks
+                    .Include(p => p.Playlists)
+                    .FirstOrDefault(t => t.TrackId == SelectedTrack.TrackId);
+
+                    if (dbTrack != null) {
+                        playlist.Tracks.Add(dbTrack);
+                        await dbContext.SaveChangesAsync();
+                        playlistName = playlist.Name;
+                    }
+                }
+            }
         }
 
         CloseInfoMessage();
-        InfoMessage = $"Track {Artist.Name} - {SelectedTrack.AlbumTitle} - {SelectedTrack.TrackName} added to playlist {{playlist name}}.";
+        InfoMessage = $"Track {Artist.Name} - {SelectedTrack.AlbumTitle} - {SelectedTrack.TrackName} added to playlist {playlistName}.";
         PlaylistDialog.Close();
     }
 

@@ -1,4 +1,10 @@
-﻿<div class="top-row ps-3 navbar navbar-dark">
+﻿@using Chinook.ClientModels
+@using Chinook.Models
+@using Chinook.Services.Interfaces
+@using Microsoft.EntityFrameworkCore
+@using System.Security.Claims;
+
+<div class="top-row ps-3 navbar navbar-dark">
     <div class="container-fluid">
         <a class="navbar-brand" href="">Chinook</a>
         <button title="Navigation menu" class="navbar-toggler" @onclick="ToggleNavMenu">
@@ -14,24 +20,53 @@
                 <span class="oi oi-home" aria-hidden="true"></span>Home
             </NavLink>
         </div>
-        <div class="nav-item px-3">
-@* 
-            <NavLink class="nav-link" href="playlist/playlistnumber">
-                <i class="bi bi-music-note-list me-3" style="font-size: 1.25em"></i>My favorite tracks
-            </NavLink>
-*@
-</div>
 
+        @foreach (var playlist in PlaylistService.Playlists) {
+            <NavLink class="nav-link" href="@GetPlaylistUrl(playlist.PlaylistId)">
+                <i class="bi bi-music-note-list me-3" style="font-size: 1.25em"></i> @playlist.Name
+            </NavLink>
+        }
+        <div class="nav-item px-3">
+        </div>
     </nav>
 </div>
 
 @code {
+    [Inject] IPlaylistService PlaylistService { get; set; }
+    [CascadingParameter] private Task<AuthenticationState> authenticationState { get; set; }
+
     private bool collapseNavMenu = true;
 
     private string? NavMenuCssClass => collapseNavMenu ? "collapse" : null;
 
-    private void ToggleNavMenu()
-    {
+    private void ToggleNavMenu() {
         collapseNavMenu = !collapseNavMenu;
+    }
+
+    private string CurrentUserId;
+    private string InfoMessage;
+
+    protected override async Task OnInitializedAsync() {
+        CurrentUserId = await GetUserId();
+
+        await InvokeAsync(StateHasChanged);
+
+        await PlaylistService.LoadPlaylists(CurrentUserId);
+
+        PlaylistService.OnChange += StateHasChanged;
+    }
+
+    private async Task<string> GetUserId() {
+        var user = (await authenticationState).User;
+        var userId = user.FindFirst(u => u.Type.Contains(ClaimTypes.NameIdentifier))?.Value;
+        return userId;
+    }
+
+    private string GetPlaylistUrl(long playlistId) {
+        return $"playlist/{playlistId}";
+    }
+
+    public void Dispose() {
+        PlaylistService.OnChange -= StateHasChanged;
     }
 }
